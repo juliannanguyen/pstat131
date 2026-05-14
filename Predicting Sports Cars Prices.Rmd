@@ -1,0 +1,690 @@
+---
+title: "Predicting Prestige: What Drives Sports Car Prices?"
+author: "Julianna Nguyen"
+date: "UCSB Winter 2026"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+
+The aim of this project is to build a machine learning model that can predict the price of a sports car using its mechanical features. More specifically, I want to determine which features most strongly influence car price and evaluate which machine learning models produce the most accurate predictions. Sports car prices vary dramatically depending on engine size, horsepower, acceleration capability, brand prestige, and technological enhancements. Understanding how these variables influence price is not only valuable for consumers and dealerships, but also provides insight into how performance engineering translates into economic value.
+
+In supervised machine learning, a model learns relationships between predictor variables and known outcomes using labeled data. Because the outcome variable in this project, price, is continuous, this problem is treated as a regression problem. Several regression models will be fit and compared, including linear regression, elastic net, random forest, and boosted trees. Model performance will be evaluated using cross-validation on the training data and then assessed on unseen testing data using the RMSE (Root Mean Squared Error), Mean Absolute Error, and $R^2$. The goal of this project is predictive and explanatory. I want to build an accurate pricing model while also learning which characteristics matter most in determining the value of a sports car.
+
+![](DSC00034.jpg){width="68%"}
+
+# What Is Considered a Sports Car?
+
+Sports cars are high-performance vehicles that are designed for speed, acceleration, and precise handling. Unlike standard passenger vehicles that prioritize comfort, fuel efficiency, or cargo space, sports cars are engineered with performance as the main objective. They typically feature aerodynamic body designs, powerful engines, lightweight construction, and advanced suspension systems that allow them to achieve higher speeds and more responsive handling than conventional cars. These engineering characteristics often make sports cars more expensive to produce, which contributes to their higher market prices.
+
+In the automotive industry, sports cars are often grouped into three general categories: standard sports cars, supercars, and hypercars. Standard sports cars focus on performance and handling while remaining relatively accessible in terms of price and production volume. Supercars represent a higher level of performance, featuring significantly greater horsepower, exotic styling, and limited production from manufacturers such as Ferrari, Lamborghini, McLaren. At top tier are hypercars, which represent the most advanced level of automotive engineering. These vehicles often exceed 1000 horsepower, incorporate cutting-edge technology and lightweight materials, and are produced in extremely limited quantities. Since these categories differ greatly in engineering complexity and exclusivity, they help explain the large variation in sports car prices observed in the market.
+
+![](918spyder.jpg){width="76%"}
+
+# What Are We Trying to Do?
+
+Ever since I was younger I have been fascinated with sports cars, largely because of my dad. Everywhere we would go, he would point out the make and model of the cars on the road. Over time, I started to recognize the differences myself and became more interested in what made certain cars special. This curiosity led me to the key question: how much of a sports car's price can be explained by measurable mechanical characteristics? Is the price primary driven by horsepower and engine size, and do other variables play an equally important role? This project aims to answer these questions by building and comparing predictive regression models that estimate car prices based on their features.
+
+# Exploratory Data Analysis (EDA)
+
+Before fitting machine learning models, it's important to explore and understand the dataset. Exploratory data analysis helps identify potential issues such as missing values, duplicate observations, and unusual distribution. It also allows us to examine the relationships between predictor variables and the outcome variable, which in this case is the price of the sports car. Understanding these relationships allows us to see which variables may be useful predictors when building machine learning models.
+
+## Loading Packages and the Data
+
+The way we will be obtaining data for this project is by loading the csv file into R.
+
+```{r, message = FALSE}
+# Loading packages
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(tidyverse)
+library(corrplot)
+library(kknn)
+library(janitor)
+library(stringr)
+library(scales)
+library(rsample)
+library(tidymodels)
+library(parsnip)
+library(xgboost)
+library(vip)
+
+set.seed(131)
+
+# Reading the data in
+sports_car_data <- read_csv("Sport car price.csv")
+
+# Column names
+names(sports_car_data)
+
+# Dimensions of the Data
+dim(sports_car_data)
+head(sports_car_data)
+```
+
+This data was taken from the Kaggle data set: [*Sports Car Prices Dataset* by Kiattisak Rattanaporn (Rattanaporn, n.d.)](https://www.kaggle.com/datasets/rkiattisak/sports-car-prices-dataset?resource=download).
+
+The dataset contains several variables describing each sports car, including the manufacturer, model, year, engine size, horsepower, torque, acceleration time, and price. These variables describe both the engineering characteristics of each vehicle and is market value, which makes them useful predictors for modeling price.
+
+Examining the structure of the dataset provides and overview of the number of observations and the variables available for analysis.
+
+The data has 1007 observations and 8 columns total.
+
+## Cleaning Column names
+
+Before continuing with the analysis, the column names are cleaned to ensure that they are consistent and easier to work with in R. The original dataset contains column names with spaces and special characters, which can make them more difficult to reference in the code. For example, column names like `Price (in USD)` or `0-60 MPH Time (seconds)` require backticks when used in R, which can make the code less readable.
+
+To address this issue, the `clean_names()` function from the janitor package is used to convert all column names to lowercase and replaces spaces and special characters with underscores.
+
+```{r}
+sports_car_data <- sports_car_data %>%
+  clean_names()
+
+names(sports_car_data)
+```
+
+After applying `clean_names()`, the column names are transformed into a consistent format such as `price_in_usd`, `engine_size_num`, and `x0_60_mph_time_seconds`. Standardizing column names improves code readability and helps prevent errors when referencing variables throughout the analysis.
+
+## Missing Data
+
+It's important to check whether any variables contain missing values. Missing data can reduce model accuracy and may require imputation or removal depending on the extent of missingness.
+
+```{r}
+# Looking for missing values
+sports_car_data %>% summarise(across(everything(), ~sum(is.na(.))))
+
+
+# Dimensions of the data
+dim(sports_car_data)
+```
+
+Missing data were checked across all variables before beginning the analysis. The output shows zeroes for all variables, however, we still need to go through the data for inconsistencies and duplicated data.
+
+```{r}
+# Looking at the duplicated values in the data
+duplicated_values <- unique(sports_car_data$car_model[duplicated(sports_car_data$car_model)])
+duplicated_values
+
+# Remove duplicate observations
+cars_clean <- sports_car_data[!duplicated(sports_car_data[, c("car_make", "car_model", "year")]), ]
+
+# Check the dimensions of the cleaned data
+dim(cars_clean)
+```
+
+## Cleaning Inconsistent Values
+
+Some variables contain inconsistent values that must be standardized before analysis. For example, the engine size variable contains text entries describing electric powertrains or hybrid configuration rather than traditional engine displacement.
+
+```{r}
+# Fixing inconsistencies
+cars_clean <- cars_clean %>%
+  mutate(
+    engine_size_l = recode(
+      engine_size_l,
+      "Electric (93 kWh)" = "Electric",
+      "Electric Motor" = "Electric",
+      "1.5 + Electric" = "Electric",
+      "N/A" = "Electric"
+    )
+  )
+
+# Converting performance variables to numeric
+cars_clean <- cars_clean %>%
+  mutate(
+    torque_lb_ft = readr::parse_number(as.character(torque_lb_ft)),
+    horsepower = readr::parse_number(as.character(horsepower)),
+    x0_60_mph_time_seconds = readr::parse_number(as.character(x0_60_mph_time_seconds)),
+    engine_size_num = suppressWarnings(readr::parse_number(as.character(engine_size_l))),
+    price_in_usd = readr::parse_number(as.character(price_in_usd))
+  )
+
+glimpse(cars_clean)
+```
+
+Standardizing these values helps ensure that similar engine types are grouped together and reduces inconsistencies within the dataset. Data cleaning like this is an important step because inconsistent data can negatively affect machine learning models. Because electric vehicles do not have a traditional engine displacement measured in liters, converting this variable to numeric resulted in missing values (NA) for electric vehicles. These observations remain in the dataset, but their engine size is undefined in terms of liters.
+
+The original engine size variable was retained as a text-based field, while a separate numeric variable `engine_size_num` was created for numerical analysis. Electric vehicles don't have a traditional engine displacement measured in liters, so these observations appear as missing values in the numeric engine-size variable. There were 19 observations from electric vehicles that had no numeric engine displacement. Some affected cars were the Porsche Taycan 4s, BMW i8, and Tesla Roadster. After getting rid of inconsistent values and cleaning the data, we're left with 262 observations and 8 columns plus the new column `engine_size_num`.
+
+## Summary Statistics
+
+To better understand the distributions of the key numerical variables in the dataset, summary statistics were calculated for variables related to vehicle performance and price. These variables include price, horsepower, torque, engine size, acceleration time, and production year.
+
+```{r}
+cars_clean %>%
+  select(price_in_usd, horsepower, torque_lb_ft, x0_60_mph_time_seconds, engine_size_num, year) %>%
+  summary()
+```
+
+The summary statistics provide insight into the range and distribution of the major performance characteristics of the sports cars included in the dataset. Prices range from \$25,000 to \$5,200,00, with a median price of approximately \$117750, and an average price of \$441,373. The large difference between the median and mean suggests that the dataset contains a number of extremely expensive vehicles that increase that overall average price.
+
+## Distribution of Car Prices
+
+Understanding the distribution of the outcome variable is an important first step before building predictive models. In this project, the outcome variable is `price_in_usd`, which represents the market price of each sports car.
+
+```{r}
+ggplot(cars_clean, aes(x = price_in_usd)) +
+  geom_histogram(bins = 30, fill = "lightseagreen", color = "black") +
+  scale_x_log10(labels = dollar) +
+  labs(
+    title = "Distribution of Sports Car Prices (Log Scale)",
+    x = "Price (USD, log scale)",
+    y = "Count"
+  )
+```
+
+The histogram shows that the distribution of sports car prices is heavily right-skewed. Most cars in the dataset fall within the lower price ranges, with a large concentration of cars priced under \$200,000. However there are several extremely expensive vehicles that extend the distribution to the far right, with prices reaching up to \$5.2 million.
+
+These high-priced vehicles represent supercars and hypercars, which command significantly higher prices due to their advanced engineering, performance capabilities, and exclusivity. Because only a small number of these vehicles exist in the dataset, they appear as outliers in the price distribution.
+
+The presence of these extreme values also explain why the mean price is substantially higher than the median price, as shown in the summary statistics. This skewed distribution suggests that the price predictions may be influenced by the outliers.
+
+## Relationship Between Horsepower and Price
+
+One of the most important mechanical characteristics of a sportscar is horsepower, which reflects the engine's ability to produce power. It's reasonable to expect that vehicles with higher horsepower may command higher prices.
+
+```{r}
+ggplot(cars_clean, aes(x = horsepower, y = price_in_usd)) + geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", se = FALSE, color = "red") + 
+  scale_y_continuous(labels = dollar) +
+  labs(
+    title = "Horsepower vs Sports Car Price",
+    x = "Horsepower",
+    y = "Price (USD)"
+  )
+```
+
+The scatterplot suggests a positive relationship between horsepower and vehicle price. In general, vehicles with higher horsepower tend to be more expensive. The fitted regression line highlights this upward trend, indicating that price increases as horsepower increases.
+
+However, the relationship is not perfectly linear. There is a considerable amount of variability among vehicles with similar horsepower levels. For example, several vehicles between 600 and 800 horsepower vary widely in price. This suggests that horsepower alone does not fully determine the price of a sports car.
+
+A small number of cars with extremely high horsepower appears as high-price outliers in the dataset. These vehicles likely represent rare hypercars with unique engineering and limited production, which greatly increases their market value.
+
+Overall, while horsepower appears to be an important predictor of price, other factors, such as brand reputation, rarity, technological features, and design, likely contribute significantly to determining the price of a sports car.
+
+## Acceleration Performance and Price
+
+Acceleration time is another key indicator of sports car performance. Faster vehicles typically reach 0-60 miles per hour in fewer seconds, which may be associated with higher vehicle prices.
+
+```{r}
+ggplot(cars_clean, aes(x = x0_60_mph_time_seconds, y = price_in_usd)) + 
+  geom_point(alpha = 0.6) + 
+  geom_smooth(method = "lm", se = FALSE, color = "red") + 
+  scale_y_continuous(labels = dollar) +
+  labs(
+    title = "Acceleration Time vs. Sports Car Price",
+    x = "0-60 MPH Time (seconds)",
+    y = "Price (USD)"
+  )
+```
+
+The scatterplot suggests a negative relationship between acceleration time and price. Typically vehicles that accelerate more quickly (lower 0-60 MPH times) tend to have higher prices. The downward-sloping regression line illustrates this trend, indicating that as acceleration time increases, the price tends to decrease.
+
+However, there is still a noticeable amount of variation in price among vehicles with similar acceleration times. For example, many vehicles that reach 0-60 MPH in around 3 seconds have prices that vary significantly. This indicates that while acceleration plays a role in determining price, it's not the only factor. Faster acceleration is generally associated with higher-priced vehicles, but the relationship is not perfectly linear and other variables likely contribute to explaining price differences.
+
+## Correlation Between Numerical Variables
+
+To better understand the relationship between numerical variables in the dataset, a correlation matrix was computed for price, horsepower, torque, acceleration time, and engine size. The correlation plot visualizes both the strength and direction of the relationships between these variables.
+
+```{r}
+# Shortening variable names
+numeric_data <- cars_clean %>%
+  select(price_in_usd, horsepower, torque_lb_ft, x0_60_mph_time_seconds, engine_size_num) %>%
+  rename(
+    Price = price_in_usd,
+    Horsepower = horsepower,
+    Torque = torque_lb_ft,
+    Acceleration = x0_60_mph_time_seconds,
+    EngineSize = engine_size_num
+  )
+
+cor_matrix <- cor(numeric_data, use = "complete.obs")
+
+corrplot::corrplot(
+  cor_matrix,
+  method = "circle",
+  type = "lower",
+  tl.col = "black",
+  tl.srt = 45
+)
+```
+
+The correlation matrix shows several expected relationships between sports car performance characteristics. Horsepower and torque exhibit a very strong positive aspects of engine power. Vehicles with higher horsepower generally also produce higher torque.
+
+Acceleration time shows a negative correlation with both horsepower and torque, which indicates that vehicles with greater engine power tend to accelerate faster. Since acceleration time measures how long it takes for a car to reach 60 mph, lower values represent faster vehicles. This is why the negative correlation suggests that more powerful cars reach 60 mph in less time.
+
+Price appears to have moderate positive relationship with horsepower and torque, suggesting that vehicles with greater engine performance tend to be more expensive. However, the relationship is not perfectly strong, which implies that other factors also contribute to determining the price of sports cars.
+
+Engine size shows a positive relationship with horsepower and torque, which suggest that vehicles with greater engine performance tend to be more expensive. However the relationship is not perfectly strong, which implies that other factors also contribute to determining the cost of a sport car.
+
+Overall, the correlation analysis suggests that engine performance characteristics are related to sports car prices, supporting the motivation for using these variables as predictors in the machine learning models developed later in this project.
+
+# Data Splitting/Cross-Validation
+
+Before fitting machine learning models, the dataset must be divided into training and testing sets. The training set is used to fit the models, while the testing set is used to evaluate how well the model performs on unseen data. In this project, I decided to split so that 70% of the data was used for training and 30% is used for testing.
+
+```{r}
+car_split <- initial_split(cars_clean, prop = 0.7, strata = price_in_usd)
+
+car_train <- training(car_split)
+car_test <- testing(car_split)
+```
+
+Stratified sampling was used based on the outcome variable (price_in_usd) to ensure that the distribution of prices remains similar in both training and testing datasets. This helps prevent imbalances that could negatively affect model performance.
+
+## Cross Validation
+
+To obtain more reliable estimates of model performance, k-fold cross-validation was used during model training. Cross-validation repeatedly splits the training data into smaller training and validation subsets, allowing the model to be evaluated across multiple data partitions.
+
+In this project, a 10-fold cross-validation was used.
+
+```{r}
+car_folds <-vfold_cv(car_train, v = 10, strata = price_in_usd)
+```
+
+Cross validation helps reduce the risk of overfitting, which occurs when a model performs well on training data but poorly on new data. By averaging performance across multiple folds, cross-validation provides a more stable estimate of model accuracy.
+
+## Recipe
+
+Before fitting models, a recipe needs to be created to prepare the data for machine learning algorithms.
+
+```{r}
+car_recipe <- recipe(price_in_usd ~ horsepower + torque_lb_ft + x0_60_mph_time_seconds + engine_size_num + year,
+                     data = car_train) %>%
+  step_impute_mean(engine_size_num) %>%
+  step_normalize(all_predictors())
+```
+
+The preprocessing steps include imputing missing values in the engine size variable using the mean value. Normalizing predictor variables so they are on comparable scales. Normalization is important for models such as elastic net regression, which are sensitive to differences in variable magnitude.
+
+# Model Fitting
+
+After completing the exploratory data analysis and preparing the dataset, the next step is to develop machine learning models capable of predicting sports car prices based on their mechanical characteristics. In this project, several different modeling approaches are used to compare predictive performance and determine which method best captures the relationship between performance variables and vehicle price.
+
+Since the outcome variable `price_in_usd`, is continuous, this problem is treated as a regression task. Multiple regression-based and machine learning models will be evaluated to determine which approach produces the most accurate predictions.
+
+The models explored in this analysis are linear regression, elastic net regression, random forest, and gradient boosted trees. These models were chosen because they represent a range of modeling complexity. Linear regression provides a simple baseline model, while elastic net regression introduces regularization to handle potential multicollinearity among predictors. Random forests and gradient boosted trees are more flexible machine learning algorithms capable of capturing complex nonlinear relationships in the data. All the models are trained using the training dataset and evaluated using 10-fold cross-validation to obtain reliable estimates of predictive performance.
+
+## Linear Regression Model
+
+The first model fitted is a standard regression model, which serves as a baseline for comparison with more advanced machine learning models. Linear regression assumes that the relationship between the predictor variables and the response variable is approximately linear.
+
+```{r}
+lm_model <- linear_reg() %>%
+  set_engine("lm")
+
+# Workflow
+lm_workflow <- workflow() %>%
+  add_recipe(car_recipe) %>%
+  add_model(lm_model)
+
+# Model Training
+lm_fit <- fit_resamples(
+  lm_workflow,
+  resamples = car_folds,
+  metrics = metric_set(rmse)
+)
+```
+
+## Elastic Net Regression
+
+Elastic net regression extends linear regression by introducing regularization penalties that help prevent overfitting and manage correlated predictors. Elastic net combines the penalties used in both ridge regression and lasso regression. The hyperparameters penalty and mixture are tuned using cross-validation to identify the optimal combination that minimizes prediction error.
+
+```{r}
+elastic_spec <- linear_reg(
+  penalty = tune(),
+  mixture = tune()
+) %>%
+  set_engine("glmnet")
+
+# Workflow
+elastic_workflow <- workflow() %>%
+  add_recipe(car_recipe) %>%
+  add_model(elastic_spec)
+
+# Grid
+elastic_grid <- grid_regular(
+  penalty(range = c(-4, 2)),
+  mixture(),
+  levels = 10
+)
+
+# Tuning
+elastic_tune <- tune_grid(
+  elastic_workflow,
+  resamples = car_folds,
+  grid = elastic_grid,
+  metrics = metric_set(rmse)
+)
+```
+
+## Random Forest Model
+
+Random forests are ensemble learning methods that build multiple decision trees and combine their predictions to improve accuracy and reduce overfitting. Hyperparameters such as the number of predictors considered at each split (`mtry`), the number of trees (`trees`), and the minimum number of observations per node (`min_n`) are tuned using cross-validation.
+
+```{r}
+rf_spec <- rand_forest(
+  mtry = tune(),
+  trees = tune(),
+  min_n = tune()
+) %>%
+  set_engine("ranger") %>%
+  set_mode("regression")
+
+# Workflow
+rf_workflow <- workflow() %>%
+  add_recipe(car_recipe) %>%
+  add_model(rf_spec)
+
+# Grid
+rf_grid <- grid_regular(
+  mtry(range = c(1,5)),
+  trees(range = c(200,1000)),
+  min_n(range = c(5,20)),
+  levels = 5
+)
+
+# Tuning
+rf_tune <- tune_grid(
+  rf_workflow,
+  resamples = car_folds,
+  grid = rf_grid
+)
+```
+
+## Gradient Boosted Trees
+
+Gradient boosted trees build models sequentially, where each tree attempts to correct the errors made by the previous trees. This often results in highly accurate predictive models. These models are tuned using cross-validation to determine the optimal values for the learning rate, number of trees, and node size.
+
+```{r}
+boost_spec <- boost_tree(
+  trees = tune(),
+  learn_rate = tune(),
+  min_n = tune()
+) %>%
+  set_engine("xgboost") %>%
+  set_mode("regression")
+
+# Workflow
+boost_workflow <- workflow() %>%
+  add_recipe(car_recipe) %>%
+  add_model(boost_spec)
+
+# Grid
+boost_grid <- grid_regular(
+  trees(range = c(200L, 2000L)),
+  learn_rate(range = c(-3, -1)),   # log10 scale: 0.001 to 0.1
+  min_n(range = c(5L, 40L)),
+  levels = 5
+)
+
+# Tuning
+boost_tune <- tune_grid(
+  boost_workflow,
+  resamples = car_folds,
+  grid = boost_grid,
+  metrics = metric_set(rmse)
+)
+```
+
+## Model Autoplots
+
+### Elastic Net Plot
+
+```{r}
+# Elastic Net Plot
+autoplot(elastic_tune, metric = "rmse") +
+  labs(
+    title = "Elastic Net Hyperparameter Tuning",
+    x = "Amount of Regularization (Penalty)",
+    y = "RMSE"
+  ) +
+  theme_minimal()
+```
+
+The elastic net tuning plot shows how RMSE changes as the regularization penalty increases for different values of the mixture parameter. Each colored line represents a different balance between ridge regression and lasso regression. The results indicate that RMSE remains relatively stable across different penalty values. This suggests that regularization has only a modest effect on predictive performance for this dataset. This outcome likely occurs because the model contains a small number of predictors and the relationships between predictors and price are relatively strong.
+
+### Random Forest Plot
+
+```{r}
+autoplot(rf_tune) +
+  labs(
+    title = "Random Forest Hyperparameter Tuning"
+  ) 
+```
+
+To improve the predictive performance of the random forest model, multiple hyperparameters were tuned using cross-validation. These parameters were the number of predictors selected at random each split (`mtry`), the number of trees in the forest (`trees`), and the minimum node size (`min_n`).
+
+Each panel in the figure above represents a different value of the minimum node size. Within each panel, the x-axis shows the number of predictors randomly selected at each split (`mtry`). The colored lines represent the different number of trees used in the forest. The top row of plots displays the RMSE values for each parameter combination, and the bottom row displays the corresponding $R^2$ values.
+
+The results suggest that the model performance varies depending on the combination of hyperparameters. In general, the lowest RMSE values occur when a moderate number of predictors are selected at each split. Very large or very small mtry values tend to produce slightly higher prediction error. The number of trees has a relatively small effect once the forest contains several hundred trees, which indicates that increasing the number of trees beyond this point provides only minor improvements in predictive accuracy.
+
+The minimum node size also influences performance. Smaller node sizes allow the trees to make more splits and capture more complex relationships in the data, which can improve model accuracy. However, small nodes may increase model variance. The tuning results suggest that moderate node sizes provide a good balance between model flexibility and stability.
+
+Overall, the random forest model demonstrates strong predictive performance across several parameter combinations. The tuning process helps to identify hyperparameter settings that minimize RMSE and improve the model's ability to predict sports car prices.
+
+### Boosted Trees Plot
+
+```{r}
+autoplot(boost_tune, metric = "rmse") +
+  labs(
+    title = "Gradient Boosted Tree Hyperparameter Tuning",
+    y = "RMSE"
+  ) 
+```
+
+The number of trees controls how many sequential models are built during the boosting process. As more trees are added, the model is able to able to iteratively correct predictions errors from previous trees. Tuning results show that RMSE decreases substantially as the number of trees increases from small values to about 800-1200 trees. After this point, the improvement becomes smaller, which suggests that additional trees provide diminishing improvements in predictive performance.
+
+The learning rate determines how strongly each new tree contributes to the overall model. Smaller learning rates require more trees but often lead to more stable learning. In the tuning results, moderate learning rates (around 0.01 to 0.03) tend to produce lower RMSE values than extremely small learning rates (such as 0.001). This suggests that moderate learning rates provide a good balance between gradual learning and predictive accuracy.
+
+The minimal node size controls the complexity of the individual trees. Smaller node sizes allow the model to create more splits and capture more detailed patterns in the data. Larger node sizes produce simpler trees. In the tuning results, smaller node sizes produce lower RMSE values than larger node sizes. this indicates that allowing more flexible trees improves predictive performance.
+
+The boosted tree model performs the best when the number of trees is relatively large, the learning rate is moderate, and the node size is relatively small.
+
+# Model Comparison and Performance
+
+After fitting multiple models, the next step is to compare their predictive performance in order to determine which method best predicts sports car prices. To evaluate model performance, RMSE (Root Mean Square Error) was used as the primary metric.
+
+RMSE measures the average difference between predicted prices and the true observed prices. Since the metric is expressed in the same units as the outcome variable (price), it provides an intuitive measure of prediction accuracy. Lower RMSE values indicated better model performance.
+
+The RMSE values from each model were collected and compared to determine which model produced the most accurate predictions during cross-validation.
+
+```{r}
+lm_rmse <- collect_metrics(lm_fit) %>%
+  filter(.metric == "rmse") %>%
+  slice(1)
+
+elastic_rmse <- collect_metrics(elastic_tune) %>%
+  filter(.metric == "rmse") %>%
+  arrange(mean) %>%
+  slice(1)
+
+rf_rmse <- collect_metrics(rf_tune) %>%
+  filter(.metric == "rmse") %>%
+  arrange(mean) %>%
+  slice(1)
+
+boost_rmse <- collect_metrics(boost_tune) %>%
+  filter(.metric == "rmse") %>%
+  arrange(mean) %>%
+  slice(1)
+```
+
+```{r}
+model_results <- tibble(
+  Model = c(
+    "Linear Regression",
+    "Elastic Net",
+    "Random Forest",
+    "Boosted Trees"
+  ),
+  RMSE = c(
+    lm_rmse$mean,
+    elastic_rmse$mean,
+    rf_rmse$mean,
+    boost_rmse$mean
+  )
+) %>%
+  arrange(RMSE)
+
+model_results %>%
+  mutate(RMSE = scales::dollar(RMSE))
+```
+
+After tuning and evaluating the models using cross-validation, the predictive performance of each model was compared using RMSE. Lower RMSE values indicate more accurate predictions.
+
+The comparison results show that the Random Forest model produced the lowest RMSE, followed by the Boosted Tree model. Both tree-based models substantially outperformed the linear models. The Elastic Net and standard linear regression models produced the highest RMSE values, indicating lower predictive accuracy.
+
+These results suggest that the relationship between car performance characteristics and price is most likely nonlinear and complex. Tree-based models such as random forests are able to capture nonlinear relationships and interactions between variables, which helps explain their improved predictive performance compared to linear models.
+
+Based on these results, the Random Forest Model was selected as the final model for predicting sports car prices.
+
+## Visualization Model Performance
+
+To make the comparison easier to interpret, I created a bar chart of the RMSE values for each model.
+
+```{r}
+ggplot(model_results, aes(x = reorder(Model, RMSE), y = RMSE, fill = Model)) +
+  geom_col() +
+  scale_y_continuous(labels = scales::dollar) +
+  theme_minimal() +
+  labs(
+    title = "Cross-Validated RMSE by Model",
+    x = "Model",
+    y = "RMSE"
+  ) +
+  theme(legend.position = "none")
+```
+
+The figure compares the cross-validated RMSE values for each model. The random forest model produced the lowest RMSE, indicating the highest predictive accuracy among the models considered. The boosted tree model also performed well but produced slightly larger prediction errors. Both tree-based models substantially outperformed the linear models, suggesting that the relationship between sports car performance characteristics and price is likely nonlinear. Because the random forest model achieved the lowest RMSE, it was selected as the final model for predicting sports car prices.
+
+## Final Model Selection
+
+Based on the cross-validated RMSE values, the model with the lowest prediction error was selected for final testing on the hold-out testing dataset. Using the testing set allows us to evaluate how well the model performs on new observations that were not used during model training.
+
+In this analysis, the best-performing model was selected from the tuned models and refit using the full training dataset.
+
+```{r}
+best_rf <- select_best(rf_tune, metric = "rmse")
+
+rf_final <- finalize_workflow(rf_workflow, best_rf)
+
+rf_final_fit <- fit(rf_final, data = car_train)
+```
+
+## Evaluating the Model on the Testing Data
+
+The final model was then used to generate predictions for the testing dataset.
+
+```{r}
+rf_predictions <- predict(rf_final_fit, new_data = car_test) %>%
+  bind_cols(car_test %>% select(price_in_usd))
+```
+
+Model performance on the testing dataset was evaluated using RMSE, Mean Absolute Error and $R^2$
+
+```{r}
+metric_set(rmse, mae, rsq)(
+  rf_predictions,
+  truth = price_in_usd,
+  estimate = .pred
+) %>%
+  mutate(.estimate = round(.estimate, 2))
+```
+
+After selecting the best-performing model using cross-validation, the final random forest model was evaluated on the testing dataset. The testing dataset contains observations that were not used during model training, which provides an unbiased estimate of the model's predictive performance.
+
+The model achieved an RMSE of approximately \$463,479 and a Mean Absolute Error of about \$201,829. These values represent the typical difference between the predicted and actual sports car prices. Given that the dataset includes vehicles ranging from \$25,000 to over \$5 million, these error values are reasonable for this type of prediction problem.
+
+The model also achieved an $R^2$ value of approximately 0.8, which indicates that the model explains 80% of the variation in sports car prices. This suggests that the selected characteristics, including horsepower, torque, acceleration time, engine size, and year, are strong predictors of sports car prices.
+
+Overall, the random forest model demonstrates strong predictive performance and is able to capture much of the variation in sports car pricing.
+
+## Predicted vs Actual Price
+
+```{r}
+ggplot(rf_predictions, aes(x = .pred, y = price_in_usd)) +
+  geom_point(alpha = 0.5) +
+  geom_abline(linetype = "dashed", color = "red") +
+  scale_x_continuous(labels = scales::dollar) +
+  scale_y_continuous(labels = scales::dollar) +
+  labs(
+    title = "Predicted vs Actual Sports Car Prices",
+    x = "Predicted Price",
+    y = "Actual Price"
+  )
+```
+
+To further evaluate model performance, predicted sports car prices were compared to the observed prices in the testing dataset. The scatterplot shows the relationship between predicted prices generated by the random forest model and the true vehicle prices. The red dashed diagonal line represents perfect predictions, or where the predicted price equals the actual price.
+
+Many points follow the general diagonal trend, which indicates that the model is able to produce reasonably accurate predictions for many vehicles. Cars in the lower and mid price ranges appear to be predicted more accurately, as many of these observations fall close to the reference line.
+
+The model shows larger prediction errors, however, for some extremely expensive vehicles. These high-priced cars, which likely represent rare supercars and hypercars, are more difficult to predict accurately because the dataset contains relatively few observations in this price range. Additionally, factors such as brand prestige, rarity, and special editions may influence the price of these vehicles but are not included as predictors in the dataset.
+
+Overall, the predicted versus actual plot suggests that the random forest model captures the general relationship between mechanical characteristics and sports car prices, while also exhibiting some prediction error for more expensive vehicles.
+
+# Variable Importance
+
+One advantage of tree-based models, like random forests, is that they an provide information about which predictors were the most useful for making predictions. Because the random forest model produced the lowest RMSE among the models considered, it was selected as the final model for predicting sports car prices. To better understand how the model makes predictions, a variable importance plot was created.
+
+The variable importance plot ranks the predictors according to how much they contribute to the predictive performance of the random forest model. Variables with higher importance values have a greater influence on the model's predictions. This is helpful because it identifies which mechanical characteristics are most strongly associated with sports car prices.
+
+```{r}
+# create final RF model with importance enabled
+rf_model_final <- rand_forest(
+  mtry = best_rf$mtry,
+  trees = best_rf$trees,
+  min_n = best_rf$min_n
+) %>%
+  set_engine("ranger", importance = "impurity") %>%
+  set_mode("regression")
+
+# fit it on the training data
+rf_model_final_fit <- workflow() %>%
+  add_recipe(car_recipe) %>%
+  add_model(rf_model_final) %>%
+  fit(data = car_train)
+
+# variable importance plot
+rf_model_final_fit %>%
+  extract_fit_parsnip() %>%
+  vip(aesthetics = list(fill = "lightblue", color = "black"))
+```
+
+The variable importance plot shows that torque and horsepower are the most influential predictors of sports car price. This indicates that engine performance characteristics play the largest role in determining vehicle value. In particular, higher torque and horsepower are strongly associated with more expensive vehicles, which aligns with expectations for high-performance sports cars.
+
+The next most important variable is 0-60 mph acceleration time, which also reflects vehicle performance. Faster acceleration (lower times) is generally associated with higher-priced cars. However, it's importance is slightly lower than torque and horsepower. Engine size has a moderate level of importance which suggests that while it contributes to price, it's less directly influential than performance-based metrics.
+
+Lastly, year appears to have the lowest importance among the predictors. This suggests that, within this dataset, differences in model year are less critical in determining price compared to performance characteristics.
+
+In short, the variable importance results reinforce the conclusion that sports car prices are mostly driven by performance-related features. This also helps to explain why the random forest model performs well, as it can capture nonlinear relationships and interactions among these key variables.
+
+# Conclusion
+
+![](DSC0155.jpg){width="276"}
+
+In this project, multiple machine learning models were developed and evaluated to predict sports car prices based on performance characteristics such as horsepower, torque, acceleration, and engine size. After performing exploratory data analysis, preprocessing the data, and implementing cross-validation, four models were trained and tuned: linear regression, elastic net, random forest, and gradient boosted trees. Model performance was assessed using RMSE, MAE, and $R^2$, with RMSE serving as the primary metric for comparison.
+
+The results showed that the Random Forest model performed the best, achieving the lowest RMSE of approximately \$451,548 during training and when evaluated on held-out testing, an RMSE of approximately \$463,479. This was followed by the Boosted Tree model. Both tree-based models significantly outperformed the linear models, indicating that the relationship between car features and price is nonlinear and involves complex interactions between variables. In contrast, the linear regression and elastic net models produced higher RMSE values, which suggests that they were unable to fully capture the nonlinear patterns. Based on these findings, the random forest model was selected as the final model due to its superior predictive accuracy and robustness.
+
+While the random forest model performed well, there are several opportunities for further improvement. For example, additional features like brand, car type, or production year, could be incorporated to explain the variation in price better. More extensive hyperparameter tuning or alternative models, such as support vector machines or neural networks, could be examined to improve predictive performance potentially. On top of that, transforming the response variable, may help stabilize variance and further enhance model accuracy.
+
+On a personal level, this project was a valuable opportunity to deepen my understanding of machine learning and how different models perform on real-world data. Working through the process of cleaning the dataset, tuning multiple models, and interpreting the results helped me better understand the advantages and limitations of each approach. In particular, seeing how much better tree-based models performed compared to linear models reinforced the importance of choosing models that align with the structure of the data. All in all, this project strengthened both my technical skills and ability to think critically about model performance and demonstrated the importance of selecting appropriate models for complex, real-world data.
+
+# Sources
+
+The data was taken from the Kaggle data set, "[Sports Car Prices dataset](https://www.kaggle.com/datasets/rkiattisak/sports-car-prices-dataset/data)," by user Kiattisak Rattanaporn.
+
+Rattanaporn, K. (n.d.). \*Sports Car Prices Dataset\*. Kaggle. <https://www.kaggle.com/datasets/rkiattisak/sports-car-prices-dataset>
+
+Information about sports cars were found on [JD Power](https://www.jdpower.com/cars/shopping-guides/what-makes-a-car-a-sports-car) and [Kelley Blue Book](https://www.kbb.com/what-is/sports-car/).
+
+Facts about hypercars were found on [Red Bull](https://www.redbull.com/us-en/what-is-a-hypercar).

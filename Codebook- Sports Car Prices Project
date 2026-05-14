@@ -1,0 +1,40 @@
+Codebook: Sports Car Prices Dataset
+
+Dataset Source:
+Rattanaporn, K. (n.d.). Sports Car Prices Dataset [Data set]. Kaggle.
+https://www.kaggle.com/datasets/rkiattisak/sports-car-prices-dataset
+
+Variable Descriptions:
+
+Car Make/car_make
+- The manufacturer or brand of the vehicle (e.g., Ferrari, Porsche, Lamborghini).
+
+Car model/car_model
+- The model of the sports car, representing the specific version or variant of car produced by the manufacturer (e.g., 911, Huracan, 488 GTB, M8).
+
+Year/year
+- The model year of the car.
+
+Engine Size (L)/engine_size_l
+- Original engine size variable from the dataset.
+- Represents engine displacement is liters for gasoline vehicles.
+- May contain non-numeric values (e.g., "Electric") for electric or hybrid cars.
+
+Horsepower
+- The power output of the car's engine, measured in horsepower (hp).
+
+Torque/torque_lb_ft
+- Engine torque, measured in pound-feet (lb-ft).
+
+0-60 MPH Time (seconds)/x0_60_mph_time_seconds
+- Time required for the car to accelerate from 0 to 60 mph
+- Measured in seconds
+
+Price (in USD)/price_in_usd
+- The price of sports car in US dollars
+
+Notes on cleaning:
+- Duplicate rows based on make, model, and year were removed
+- Text-based numeric fields were converted into numeric form for analysis
+- engine_size_num was created from engine_size_l
+- Missing values in engine_size_num were imputed in the modeling recipe
